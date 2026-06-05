@@ -15,7 +15,7 @@ sessions=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | tr '\n' '\034' 
 #  - strip trailing slashes (fd adds them, zoxide doesn't) so both sources dedupe
 #  - drop duplicates, preserving first-seen order
 #  - compute each dir's session name; list dirs with a live session first, tagged
-#    with a "●" marker. Each line is "<marker> <dir>"; fzf searches/previews the
+#    with a "●" marker. Each line is "<marker>\t<dir>"; fzf searches/previews the
 #    path (field 2) and we recover it after selection.
 choice=$(
   {
@@ -36,13 +36,13 @@ choice=$(
         else                             other[++no] = $0
       }
       END {
-        for (k = 1; k <= na; k++) printf "\033[32m󱘖\033[0m %s\n", active[k]
-        for (k = 1; k <= no; k++) printf "  %s\n", other[k]
+        for (k = 1; k <= na; k++) printf "\033[32m󱘖\033[0m\t%s\n", active[k]
+        for (k = 1; k <= no; k++) printf " \t%s\n", other[k]
       }
     ' |
     fzf \
       --ansi \
-      --delimiter ' ' \
+      --delimiter '\t' \
       --nth 2 \
       --scheme path \
       --prompt 'claude dir> ' \
@@ -55,7 +55,7 @@ choice=$(
 ) || exit 0
 
 # Recover the directory (2nd tab-separated field) from the selected line.
-dir=$(printf '%s\n' "$choice" | awk -F' ' '{print $2}')
+dir=$(printf '%s\n' "$choice" | awk -F'\t' '{print $2}')
 [ -z "${dir:-}" ] && exit 0
 
 # Session name from the last two path components, e.g. ~/Code/open_ims -> claude-Code-open_ims
