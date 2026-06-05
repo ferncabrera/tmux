@@ -36,22 +36,23 @@ choice=$(
         else                             other[++no] = $0
       }
       END {
-        for (k = 1; k <= na; k++) printf "\033[32m●\033[0m\t%s\n", active[k]
-        for (k = 1; k <= no; k++) printf " \t%s\n", other[k]
+        for (k = 1; k <= na; k++) printf "\033[32m󱘖\033[0m %s\n", active[k]
+        for (k = 1; k <= no; k++) printf "  %s\n", other[k]
       }
-    ' \
-    | fzf \
-        --ansi \
-        --delimiter '\t' \
-        --nth 2 \
-        --scheme path \
-        --prompt 'claude dir> ' \
-        --header '● live session' \
-        --height 100% \
-        --layout reverse \
-        --border \
-        --info inline \
-        --preview 'eza -la --color=always --icons --group-directories-first --git {2} 2>/dev/null | head -200'
+    ' |
+    fzf \
+      --ansi \
+      --style default \
+      --delimiter '\t' \
+      --nth 2 \
+      --scheme path \
+      --prompt 'claude dir> ' \
+      --header '󱘖 live session' \
+      --height 100% \
+      --layout reverse \
+      --border \
+      --info inline \
+      --preview 'eza -la --color=always --icons --group-directories-first --git {2} 2>/dev/null | head -200'
 ) || exit 0
 
 # Recover the directory (2nd tab-separated field) from the selected line.
