@@ -14,10 +14,6 @@ set -eu
 
 mode="${1:-attach}"
 
-# Directory holding this script and its sibling picker, so we can hand off to the
-# other popup type (Ctrl-A claude / Ctrl-S shell) from inside fzf.
-scripts_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 # Roots to scan for projects in addition to zoxide's frecent list.
 ROOTS=("$HOME/Code" "$HOME")
 
@@ -41,10 +37,6 @@ sessions=$(
 #  - compute each dir's session name; list dirs with a live session first, tagged
 #    with a "" marker. Each line is "<marker>\t<dir>"; fzf searches/previews the
 #    path (field 2) and we recover it after selection.
-#
-# Ctrl-A/Ctrl-S inside fzf hop between the two pickers; clear terminal flow
-# control so Ctrl-S (XOFF) reaches fzf instead of freezing the pane.
-stty -ixon </dev/tty 2>/dev/null || true
 choice=$(
   {
     _ZO_DOCTOR=0 zoxide query -l 2>/dev/null || true
@@ -88,13 +80,11 @@ choice=$(
       --nth 2 \
       --scheme path \
       --prompt 'shell dir> ' \
-      --header '󱘖 live shell   |   ^A claude  ^S shell' \
+      --header '󱘖 live shell' \
       --height 100% \
       --layout reverse \
       --border \
       --info inline \
-      --bind "ctrl-a:become(exec '$scripts_dir/claude-popup.sh' '$mode')" \
-      --bind "ctrl-s:become(exec '$scripts_dir/misc-shell-popup.sh' '$mode')" \
       --preview-window 'right,60%,border-left' \
       --preview '
         name={3}; dir={2}
