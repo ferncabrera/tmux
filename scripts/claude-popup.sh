@@ -15,6 +15,10 @@ mode="${1:-attach}"
 # Roots to scan for projects in addition to zoxide's frecent list.
 ROOTS=("$HOME/Code" "$HOME")
 
+# Visual identity so it's obvious at a glance which picker is open (pink = Claude).
+accent='#d27e99'
+border_label=' CLAUDE '
+
 # Existing tmux sessions, ordered most-recently-attached first and joined with the
 # ASCII field separator (\034) so names with spaces survive. Used to flag dirs that
 # already have a live Claude session and to order those dirs by most recent use.
@@ -82,6 +86,9 @@ choice=$(
       --height 100% \
       --layout reverse \
       --border \
+      --border-label "$border_label" \
+      --border-label-pos 3 \
+      --color "border:$accent,label:$accent:reverse:bold,prompt:$accent,pointer:$accent,marker:$accent,info:$accent,spinner:$accent,header:$accent" \
       --info inline \
       --preview-window 'right,60%,border-left' \
       --preview '
