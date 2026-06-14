@@ -14,12 +14,12 @@ set -eu
 
 mode="${1:-attach}"
 
-# Directory holding this script and its sibling picker, so we can hand off to the
-# other popup type (Ctrl-A claude / Ctrl-S shell) from inside fzf.
-scripts_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 # Roots to scan for projects in addition to zoxide's frecent list.
 ROOTS=("$HOME/Code" "$HOME")
+
+# Visual identity so it's obvious at a glance which picker is open (blue = misc-shell).
+accent='#7e9cd8'
+border_label=' MISC-SHELL '
 
 # Existing tmux sessions, ordered most-recently-attached first and joined with the
 # ASCII field separator (\034) so names with spaces survive. Used to flag dirs that
@@ -41,10 +41,6 @@ sessions=$(
 #  - compute each dir's session name; list dirs with a live session first, tagged
 #    with a "" marker. Each line is "<marker>\t<dir>"; fzf searches/previews the
 #    path (field 2) and we recover it after selection.
-#
-# Ctrl-A/Ctrl-S inside fzf hop between the two pickers; clear terminal flow
-# control so Ctrl-S (XOFF) reaches fzf instead of freezing the pane.
-stty -ixon </dev/tty 2>/dev/null || true
 choice=$(
   {
     _ZO_DOCTOR=0 zoxide query -l 2>/dev/null || true
@@ -88,13 +84,14 @@ choice=$(
       --nth 2 \
       --scheme path \
       --prompt 'shell dir> ' \
-      --header '󱘖 live shell   |   ^A claude  ^S shell' \
+      --header '󱘖 live shell' \
       --height 100% \
       --layout reverse \
       --border \
+      --border-label "$border_label" \
+      --border-label-pos 3 \
+      --color "border:$accent,label:$accent:reverse:bold,prompt:$accent,pointer:$accent,marker:$accent,info:$accent,spinner:$accent,header:$accent" \
       --info inline \
-      --bind "ctrl-a:become(exec '$scripts_dir/claude-popup.sh' '$mode')" \
-      --bind "ctrl-s:become(exec '$scripts_dir/misc-shell-popup.sh' '$mode')" \
       --preview-window 'right,60%,border-left' \
       --preview '
         name={3}; dir={2}
