@@ -69,7 +69,7 @@ choice=$(
           }
           active[k+1] = v; arank[k+1] = vr; asess[k+1] = vs
         }
-        for (k = 1; k <= na; k++) printf "\033[32m\033[0m\t%s\t%s\n", active[k], asess[k]
+        for (k = 1; k <= na; k++) printf "\033[32m󱘖\033[0m\t%s\t%s\n", active[k], asess[k]
         for (k = 1; k <= no; k++) printf " \t%s\t\n", other[k]
       }
     ' |
@@ -80,7 +80,7 @@ choice=$(
       --nth 2 \
       --scheme path \
       --prompt 'shell dir> ' \
-      --header ' live shell' \
+      --header '󱘖 live shell' \
       --height 100% \
       --layout reverse \
       --border \
