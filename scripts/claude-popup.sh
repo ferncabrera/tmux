@@ -52,8 +52,12 @@ choice=$(
       { sub(/\/+$/, "") }                  # normalize trailing slash
       !NF || seen[$0]++ { next }           # skip blanks and duplicates
       {
-        m = split($0, p, "/")
-        slug = (m >= 2) ? p[m-1] "-" p[m] : p[m]
+        # Derive the session name from the FULL path. Using only the last two
+        # components collided when two dirs shared them (e.g.
+        # .../open_ims/microservices/ims/client and
+        # .../open_ims_2/microservices/ims/client both became "ims-client"),
+        # which showed a duplicate live entry and shared one session.
+        slug = $0
         gsub(/[^[:alnum:]_-]/, "_", slug)
         sname = "claude-" slug
         # Emit the live session name as a hidden 3rd field so the fzf preview can
@@ -110,9 +114,10 @@ if [ -z "${dir:-}" ]; then
   exit 0
 fi
 
-# Session name from the last two path components, e.g. ~/Code/open_ims -> claude-Code-open_ims
-slug=$(printf '%s' "$dir" | awk -F/ '{ if (NF>=2) print $(NF-1)"-"$NF; else print $NF }')
-name="claude-$(printf '%s' "$slug" | tr -c '[:alnum:]_-' '_')"
+# Session name from the FULL path so dirs sharing their last components don't
+# collide, e.g. /Users/you/Code/open_ims -> claude-_Users_you_Code_open_ims.
+# Must match the awk slug logic above (same character class).
+name="claude-$(printf '%s' "$dir" | tr -c '[:alnum:]_-' '_')"
 
 # Create the per-directory session if needed, then connect to it: switch mode
 # retargets the current popup client (no nesting), attach mode wires up this popup.
