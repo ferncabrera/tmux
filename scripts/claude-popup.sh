@@ -10,8 +10,6 @@
 #                       client with switch-client instead of stacking a nested popup.
 set -eu
 
-mode="${1:-attach}"
-
 # Roots to scan for projects in addition to zoxide's frecent list.
 ROOTS=("$HOME/Code" "$HOME")
 
@@ -19,18 +17,26 @@ ROOTS=("$HOME/Code" "$HOME")
 accent='#d27e99'
 border_label=' CLAUDE '
 
-# Existing tmux sessions, ordered most-recently-attached first and joined with the
-# ASCII field separator (\034) so names with spaces survive. Used to flag dirs that
-# already have a live Claude session and to order those dirs by most recent use.
-# `session_last_attached` is the epoch of the last attach; sort -rn floats the
-# session you opened most recently to the top, then cut keeps just the name.
-sessions=$(
-  tmux list-sessions -F '#{session_last_attached} #{session_name}' 2>/dev/null \
-    | sort -rn -k1,1 \
-    | cut -d' ' -f2- \
-    | grep -vx 'claude-picker' \
-    | tr '\n' '\034' || true
-)
+# Absolute path to this script so the fzf binds below can re-invoke our sub-modes
+# (fzf runs each bind command in a separate process, not inside this shell).
+self="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")"
+
+# emit_list: build the picker list. Runs for the initial fzf load and again on every
+# `reload` (after an alt-bspace kill) so a killed session stops showing as live.
+emit_list() {
+  # Existing tmux sessions, ordered most-recently-attached first and joined with the
+  # ASCII field separator (\034) so names with spaces survive. Used to flag dirs that
+  # already have a live Claude session and to order those dirs by most recent use.
+  # `session_last_attached` is the epoch of the last attach; sort -rn floats the
+  # session you opened most recently to the top, then cut keeps just the name.
+  local sessions
+  sessions=$(
+    tmux list-sessions -F '#{session_last_attached} #{session_name}' 2>/dev/null \
+      | sort -rn -k1,1 \
+      | cut -d' ' -f2- \
+      | grep -vx 'claude-picker' \
+      | tr '\n' '\034' || true
+  )
 
 # Build the picker list:
 #  - zoxide frecency + a shallow fd scan of ROOTS
@@ -39,7 +45,6 @@ sessions=$(
 #  - compute each dir's session name; list dirs with a live session first, tagged
 #    with a "●" marker. Each line is "<marker>\t<dir>"; fzf searches/previews the
 #    path (field 2) and we recover it after selection.
-choice=$(
   {
     _ZO_DOCTOR=0 zoxide query -l 2>/dev/null || true
     fd --type d --max-depth 1 --hidden --exclude .git . "${ROOTS[@]}" 2>/dev/null || true
@@ -78,8 +83,22 @@ choice=$(
         for (k = 1; k <= na; k++) printf "\033[32m󱘖\033[0m\t%s\t%s\n", active[k], asess[k]
         for (k = 1; k <= no; k++) printf " \t%s\t\n", other[k]
       }
-    ' |
-    fzf \
+    '
+}
+
+# Sub-modes invoked by the fzf binds below (run as separate processes by fzf):
+# __list rebuilds the picker list (used by `reload` after a kill); __kill <name>
+# terminates a live session. <name> is field {3}; empty = harmless no-op.
+if [ "${1:-}" = __list ]; then emit_list; exit 0; fi
+if [ "${1:-}" = __kill ]; then
+  if [ -n "${2:-}" ]; then tmux kill-session -t "=$2" 2>/dev/null || true; fi
+  exit 0
+fi
+
+mode="${1:-attach}"
+
+choice=$(
+  emit_list | fzf \
       --ansi \
       --delimiter '\t' \
       --with-nth 1,2 \
@@ -95,6 +114,7 @@ choice=$(
       --color "border:$accent,label:$accent:reverse:bold,prompt:$accent,pointer:$accent,marker:$accent,info:$accent,spinner:$accent,header:$accent" \
       --info inline \
       --preview-window 'right,60%,border-left' \
+      --bind "alt-bspace:execute-silent($self __kill {3})+reload($self __list)" \
       --preview '
         name={3}; dir={2}
         if [ -n "$name" ] && tmux has-session -t "=$name" 2>/dev/null; then
