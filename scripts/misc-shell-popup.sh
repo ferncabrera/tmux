@@ -24,7 +24,7 @@ border_label=' MISC-SHELL '
 self="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")"
 
 # emit_list: build the picker list. Runs for the initial fzf load and again on every
-# `reload` (after an alt-bspace kill) so a killed session stops showing as live.
+# `reload` (after an alt-bspace / ctrl-x kill) so a killed session stops showing as live.
 emit_list() {
   # Existing tmux sessions, ordered most-recently-attached first and joined with the
   # ASCII field separator (\034) so names with spaces survive. Used to flag dirs that
@@ -116,7 +116,7 @@ choice=$(
       --color "border:$accent,label:$accent:reverse:bold,prompt:$accent,pointer:$accent,marker:$accent,info:$accent,spinner:$accent,header:$accent" \
       --info inline \
       --preview-window 'right,60%,border-left' \
-      --bind "alt-bspace:execute-silent($self __kill {3})+reload($self __list)" \
+      --bind "alt-bspace,ctrl-x:execute-silent($self __kill {3})+reload($self __list)" \
       --preview '
         name={3}; dir={2}
         if [ -n "$name" ] && tmux has-session -t "=$name" 2>/dev/null; then
