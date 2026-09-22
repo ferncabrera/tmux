@@ -34,7 +34,8 @@
 #   @float-instance  unique token for the current popup command, so a dying popup
 #                    never clears state belonging to the popup that replaced it.
 #   @float-host      client name of the client the popup is drawn on.
-#   @float-kind      claude | misc
+#   @float-kind      claude | misc — the kind of the session on show, which is
+#                    not necessarily the kind the float was opened with.
 #   @float-session   session currently displayed in the float.
 #   @float-pw/-ph    wanted size as a permille of the host client (920 = 92.0%).
 #   @float-want-w/-h popup box size in cells we last asked for, used to tell our
@@ -122,6 +123,17 @@ float_session_regex() {
 is_float_session() {
   [ -n "${1:-}" ] || return 1
   printf '%s\n' "$1" | grep -qE "$(float_session_regex)"
+}
+
+# Which kind a session belongs to, from its name: claude-foo -> claude. The kind
+# names and the prefixes are the same list, so this stays in step with
+# FLOAT_PREFIXES. Fails for anything that is not a float session.
+kind_of_session() {
+  local p
+  for p in "${FLOAT_PREFIXES[@]}"; do
+    case "${1:-}" in "$p"*) printf '%s\n' "${p%-}"; return 0 ;; esac
+  done
+  return 1
 }
 
 # Most recently attached float session, excluding the throwaway *-picker sessions
@@ -231,6 +243,33 @@ open_popup() {
   tm display-popup -c "$client" -w "$bw" -h "$bh" -x C -y C \
     -b rounded -S "fg=$accent" -T "$label" \
     -E "'$self' run '$kind' '$sess'"
+}
+
+# The float is one window that shows sessions of either kind: a claude session
+# can hand over to a misc-shell one when it exits, and ^S retargets a claude
+# float at the misc picker. The title and border colour are baked into the popup
+# at creation, so they have to be re-applied whenever the session changes, or the
+# float keeps claiming to be whatever it was opened as.
+#
+# display-popup on a client that ALREADY has a popup takes tmux's modify path,
+# which changes only the title and styles in place — no resize, no flicker, and
+# the nested client is untouched. -b/-B are deliberately not passed: they are the
+# one modify argument that can resize the popup on the way through.
+apply_style() {
+  local sess=$1 kind host
+  kind=$(kind_of_session "$sess") || return 0
+  host=$(opt @float-host)
+  [ -n "$host" ] || return 0
+  float_open || return 0                 # no popup to modify; do not create one
+  kind_config "$kind"
+
+  # Remembered so a rebuild (on terminal resize) recreates the popup wearing the
+  # colours of the session it is showing, not the one it was opened with.
+  setopt_ @float-kind "$kind"
+  # `-E true` is belt and braces: if the popup vanished between the check above
+  # and this command, tmux would create one instead of modifying — and that one
+  # exits immediately rather than lingering as a stray shell.
+  tm display-popup -c "$host" -T "$label" -S "fg=$accent" -E true 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------------
@@ -344,6 +383,7 @@ cmd_guard() {
          | awk -v n="$client" '$1 == n { $1 = ""; sub(/^ /, ""); print; exit }')
   [ -n "$sess" ] || return 0
   setopt_ @float-session "$sess"
+  apply_style "$sess"
   is_float_session "$sess" && return 0
 
   local next; next=$(latest_float_session "") || true

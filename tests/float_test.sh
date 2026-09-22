@@ -117,6 +117,12 @@ float_closed() { ! float_is_open; }
 float_session(){ FT list-clients -F '#{client_name} #{session_name}' 2>/dev/null \
                   | awk -v n="$(float_client)" '$1 == n { print $2; exit }'; }
 float_on()     { [ "$(float_session)" = "$1" ]; }
+# The popup's title as actually rendered: the outer pane is the host client's
+# terminal, so a capture of it includes the popup tmux drew on top. The top
+# border row is the one carrying the rounded top-left corner.
+float_title()  { OT capture-pane -t o.0 -p 2>/dev/null \
+                  | grep -m1 '╭' | grep -o 'CLAUDE\|MISC-SHELL' | head -1; }
+float_titled() { [ "$(float_title)" = "$1" ]; }
 
 # Fire the ^A/^S code path the way the key binding does.
 press() { # <kind>
@@ -207,6 +213,7 @@ test_open_and_pick() {
   got=$(box_size)
   check "float is 92%x85% of the host" "$want" "$got"
   check "float shows the picked session" "$(sname claude "$DIR_A")" "$(float_session)"
+  check "float is labelled CLAUDE"       "CLAUDE"  "$(float_title)"
   check "host client is recorded"        "$HOST" "$(fopt @float-host)"
   check "kind is recorded"               "claude" "$(fopt @float-kind)"
 }
@@ -271,6 +278,17 @@ test_hop_on_exit() {
     ok "float hops to the next float session"
   fi
   check "float never shows a normal session" "1" "$( [ "$(float_session)" != work ] && echo 1 || echo 0 )"
+
+  # The popup was opened as CLAUDE; it is now showing a misc-shell session, so
+  # its title and border must have followed the session across.
+  wait_until 30 float_titled MISC-SHELL
+  check "label follows the hop to misc" "MISC-SHELL" "$(float_title)"
+  check "remembered kind follows too"   "misc"       "$(fopt @float-kind)"
+
+  # ...and a rebuild (terminal resize) must not put the old label back.
+  resize_host 150 36
+  check "label survives a resize rebuild" "MISC-SHELL" "$(float_title)"
+  resize_host 164 40
 }
 
 test_close_when_empty() {
@@ -345,6 +363,22 @@ test_no_nesting() {
   check "no second popup client"  "2" "$(FT list-clients -F x | wc -l | tr -d ' ')"
   check "same popup client reused" "$before" "$(float_client)"
   check "retargeted at the misc session" "$(sname misc "$DIR_B")" "$(float_session)"
+  wait_until 30 float_titled MISC-SHELL
+  check "label follows the retarget"     "MISC-SHELL" "$(float_title)"
+}
+
+test_label_returns() {
+  printf '\n\033[1mlabel changes back\033[0m\n'
+  local a; a=$(sname claude "$DIR_A")
+  fake_float_session "$a"
+  FT kill-session -t "=$(sname misc "$DIR_B")" 2>/dev/null
+  if ! wait_until 40 float_on "$a"; then
+    bad "float hops back to a claude session" "on [$(float_session)]"; return
+  fi
+  ok "float hops back to a claude session"
+  wait_until 30 float_titled CLAUDE
+  check "label changes back to CLAUDE" "CLAUDE" "$(float_title)"
+  check "remembered kind changes back" "claude" "$(fopt @float-kind)"
 }
 
 test_real_keybinding() {
@@ -375,6 +409,7 @@ test_guard_rejects_normal_session
 test_closes_after_guard_when_empty
 test_deliberate_detach_closes
 test_no_nesting
+test_label_returns
 test_real_keybinding
 
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
