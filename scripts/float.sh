@@ -54,11 +54,11 @@ ROOTS=("$HOME/Code" "$HOME")
 # everything else (the regex, the "is this a float session" test) derives from it.
 FLOAT_PREFIXES=(claude- misc-)
 
-DEFAULT_PW=920   # 92.0% of the host client's width
-DEFAULT_PH=850   # 85.0% of the host client's height
-MIN_W=24         # never build a popup box smaller than this (cells)
+DEFAULT_PW=920 # 92.0% of the host client's width
+DEFAULT_PH=850 # 85.0% of the host client's height
+MIN_W=24       # never build a popup box smaller than this (cells)
 MIN_H=8
-DEBOUNCE=0.12    # seconds to coalesce a burst of resize events
+DEBOUNCE=0.12 # seconds to coalesce a burst of resize events
 
 # ---------------------------------------------------------------------------
 # tmux plumbing
@@ -75,7 +75,7 @@ else
 fi
 tm() { command tmux "${_tmux_args[@]}" "$@"; }
 
-opt()   { tm show -gqv "$1" 2>/dev/null || true; }
+opt() { tm show -gqv "$1" 2>/dev/null || true; }
 setopt_() { tm set -g "$1" "$2" 2>/dev/null || true; }
 unsetopt_() { tm set -gu "$1" 2>/dev/null || true; }
 
@@ -87,8 +87,8 @@ client_exists() {
 # Echo "<width> <height>" for a client, or nothing if it is gone.
 client_size() {
   [ -n "${1:-}" ] || return 0
-  tm list-clients -F '#{client_name} #{client_width} #{client_height}' 2>/dev/null \
-    | awk -v n="$1" '$1 == n { print $2, $3; exit }'
+  tm list-clients -F '#{client_name} #{client_width} #{client_height}' 2>/dev/null |
+    awk -v n="$1" '$1 == n { print $2, $3; exit }'
 }
 
 float_open() { client_exists "$(opt @float-client)"; }
@@ -96,16 +96,28 @@ float_open() { client_exists "$(opt @float-client)"; }
 # Per-kind identity. Sets: prefix accent label prompt header winname runcmd
 kind_config() {
   case "${1:-}" in
-    claude)
-      prefix=claude-; accent='#d27e99'; label=' CLAUDE '
-      prompt='claude dir> '; header='󱘖 live session  ·  ⌥drag move  ⌥right-drag resize'
-      winname=claude; runcmd='claude' ;;
-    misc)
-      prefix=misc-; accent='#7e9cd8'; label=' MISC-SHELL '
-      prompt='shell dir> '; header='󱘖 live shell  ·  ⌥drag move  ⌥right-drag resize'
-      winname=shell; runcmd='fastfetch; exec zsh' ;;
-    *)
-      printf 'float.sh: unknown kind: %s\n' "${1:-}" >&2; exit 2 ;;
+  claude)
+    prefix=claude-
+    accent='#16161d'
+    label=' CLAUDE '
+    prompt='claude dir> '
+    header='󱘖 live session  ·  ⌥drag move  ⌥right-drag resize'
+    winname=claude
+    runcmd='claude'
+    ;;
+  misc)
+    prefix=misc-
+    accent='#16161d'
+    label=' MISC-SHELL '
+    prompt='shell dir> '
+    header='󱘖 live shell  ·  ⌥drag move  ⌥right-drag resize'
+    winname=shell
+    runcmd='fastfetch; exec zsh'
+    ;;
+  *)
+    printf 'float.sh: unknown kind: %s\n' "${1:-}" >&2
+    exit 2
+    ;;
   esac
 }
 
@@ -131,7 +143,11 @@ is_float_session() {
 kind_of_session() {
   local p
   for p in "${FLOAT_PREFIXES[@]}"; do
-    case "${1:-}" in "$p"*) printf '%s\n' "${p%-}"; return 0 ;; esac
+    case "${1:-}" in "$p"*)
+      printf '%s\n' "${p%-}"
+      return 0
+      ;;
+    esac
   done
   return 1
 }
@@ -140,13 +156,13 @@ kind_of_session() {
 # and (optionally) one name. Empty when there is nothing left to show.
 latest_float_session() {
   local exclude="${1:-}"
-  tm list-sessions -F '#{session_last_attached} #{session_name}' 2>/dev/null \
-    | sort -rn -k1,1 \
-    | cut -d' ' -f2- \
-    | grep -E "$(float_session_regex)" \
-    | grep -vE -- '-picker$' \
-    | { if [ -n "$exclude" ]; then grep -vxF "$exclude"; else cat; fi; } \
-    | head -1
+  tm list-sessions -F '#{session_last_attached} #{session_name}' 2>/dev/null |
+    sort -rn -k1,1 |
+    cut -d' ' -f2- |
+    grep -E "$(float_session_regex)" |
+    grep -vE -- '-picker$' |
+    { if [ -n "$exclude" ]; then grep -vxF "$exclude"; else cat; fi; } |
+    head -1
 }
 
 # Create the per-directory session if needed, then make sure it is configured the
@@ -176,8 +192,8 @@ ensure_session() {
 # The box includes the border, which is what display-popup -w/-h take.
 cmd_geom() {
   local hw=$1 hh=$2 pw=$3 ph=$4 w h
-  w=$(( (hw * pw + 500) / 1000 ))
-  h=$(( (hh * ph + 500) / 1000 ))
+  w=$(((hw * pw + 500) / 1000))
+  h=$(((hh * ph + 500) / 1000))
   if [ "$w" -lt "$MIN_W" ]; then w=$MIN_W; fi
   if [ "$h" -lt "$MIN_H" ]; then h=$MIN_H; fi
   if [ "$w" -gt "$hw" ]; then w=$hw; fi
@@ -194,10 +210,10 @@ cmd_geom() {
 # border, and that becomes the new remembered proportion.
 cmd_classify() {
   local ow=$1 oh=$2 ww=$3 wh=$4 hw=$5 hh=$6 cw ch
-  cw=$(( ww < hw ? ww : hw ))
-  ch=$(( wh < hh ? wh : hh ))
+  cw=$((ww < hw ? ww : hw))
+  ch=$((wh < hh ? wh : hh))
   if { [ "$ow" -eq "$ww" ] && [ "$oh" -eq "$wh" ]; } ||
-     { [ "$ow" -eq "$cw" ] && [ "$oh" -eq "$ch" ]; }; then
+    { [ "$ow" -eq "$cw" ] && [ "$oh" -eq "$ch" ]; }; then
     printf 'auto\n'
   else
     printf 'manual\n'
@@ -217,7 +233,8 @@ open_popup() {
   local hw hh pw ph bw bh
   read -r hw hh <<<"$(client_size "$client")" || true
   [ -n "${hw:-}" ] || return 1
-  pw=$(opt @float-pw); ph=$(opt @float-ph)
+  pw=$(opt @float-pw)
+  ph=$(opt @float-ph)
   [ -n "$pw" ] || pw=$DEFAULT_PW
   [ -n "$ph" ] || ph=$DEFAULT_PH
   read -r bw bh <<<"$(cmd_geom "$hw" "$hh" "$pw" "$ph")" || true
@@ -260,7 +277,7 @@ apply_style() {
   kind=$(kind_of_session "$sess") || return 0
   host=$(opt @float-host)
   [ -n "$host" ] || return 0
-  float_open || return 0                 # no popup to modify; do not create one
+  float_open || return 0 # no popup to modify; do not create one
   kind_config "$kind"
 
   # Remembered so a rebuild (on terminal resize) recreates the popup wearing the
@@ -294,7 +311,8 @@ cmd_key() {
   # Only ever one float. If one is open on another client (a second terminal
   # window), close it there before drawing ours.
   if float_open; then
-    local oldhost; oldhost=$(opt @float-host)
+    local oldhost
+    oldhost=$(opt @float-host)
     if [ -n "$oldhost" ] && [ "$oldhost" != "$client" ]; then
       tm display-popup -C -c "$oldhost" 2>/dev/null || true
     fi
@@ -332,11 +350,14 @@ cmd_run() {
     if [ -z "$sess" ]; then
       local dir
       dir=$(pick_dir "$kind") || dir=""
-      [ -n "$dir" ] || return 0          # cancelled -> close the float
+      [ -n "$dir" ] || return 0 # cancelled -> close the float
       sess=$(session_name_for "$prefix" "$dir")
       ensure_session "$kind" "$sess" "$dir" || return 0
     else
-      ensure_session "$kind" "$sess" || { sess=""; continue; }
+      ensure_session "$kind" "$sess" || {
+        sess=""
+        continue
+      }
     fi
 
     setopt_ @float-session "$sess"
@@ -349,19 +370,19 @@ cmd_run() {
     # so it is correct even if the picker switched us elsewhere in the meantime.
     cur=$(opt @float-session)
     if [ -n "$cur" ] && tm has-session -t "=$cur" 2>/dev/null; then
-      return 0                           # deliberate detach -> close the float
+      return 0 # deliberate detach -> close the float
     fi
 
     # Spin guard: a session that dies the instant we attach must not loop forever.
-    if [ $(( SECONDS - started )) -lt 1 ]; then
-      fails=$(( fails + 1 ))
+    if [ $((SECONDS - started)) -lt 1 ]; then
+      fails=$((fails + 1))
       [ "$fails" -lt 20 ] || return 0
     else
       fails=0
     fi
 
     next=$(latest_float_session "$cur") || true
-    [ -n "$next" ] || return 0           # nothing left to show -> close the float
+    [ -n "$next" ] || return 0 # nothing left to show -> close the float
     sess="$next"
   done
 }
@@ -379,14 +400,15 @@ cmd_guard() {
 
   # Look the session up rather than taking it from the hook, so a session name
   # with a space in it can't split into two arguments.
-  sess=$(tm list-clients -F '#{client_name} #{session_name}' 2>/dev/null \
-         | awk -v n="$client" '$1 == n { $1 = ""; sub(/^ /, ""); print; exit }')
+  sess=$(tm list-clients -F '#{client_name} #{session_name}' 2>/dev/null |
+    awk -v n="$client" '$1 == n { $1 = ""; sub(/^ /, ""); print; exit }')
   [ -n "$sess" ] || return 0
   setopt_ @float-session "$sess"
   apply_style "$sess"
   is_float_session "$sess" && return 0
 
-  local next; next=$(latest_float_session "") || true
+  local next
+  next=$(latest_float_session "") || true
   if [ -n "$next" ]; then
     tm switch-client -c "$client" -t "=$next"
   else
@@ -414,16 +436,18 @@ cmd_resized() {
 # remember the new size as a proportion of the host so it survives a rebuild.
 track_manual_resize() {
   local fc host hw hh iw ih bw bh
-  fc=$(opt @float-client); host=$(opt @float-host)
+  fc=$(opt @float-client)
+  host=$(opt @float-host)
   read -r hw hh <<<"$(client_size "$host")" || true
   read -r iw ih <<<"$(client_size "$fc")" || true
   [ -n "${hw:-}" ] && [ -n "${iw:-}" ] || return 0
 
-  bw=$(( iw + 2 )); bh=$(( ih + 2 ))     # +2: we always draw a border
+  bw=$((iw + 2))
+  bh=$((ih + 2)) # +2: we always draw a border
   [ "$(cmd_classify "$bw" "$bh" "$(opt @float-want-w)" "$(opt @float-want-h)" "$hw" "$hh")" = manual ] || return 0
 
-  setopt_ @float-pw "$(( bw * 1000 / hw ))"
-  setopt_ @float-ph "$(( bh * 1000 / hh ))"
+  setopt_ @float-pw "$((bw * 1000 / hw))"
+  setopt_ @float-ph "$((bh * 1000 / hh))"
   setopt_ @float-want-w "$bw"
   setopt_ @float-want-h "$bh"
 }
@@ -442,7 +466,9 @@ rebuild_debounced() {
 
   float_open || return 0
   local kind sess host fc hw hh iw ih bw bh
-  kind=$(opt @float-kind); sess=$(opt @float-session); host=$(opt @float-host)
+  kind=$(opt @float-kind)
+  sess=$(opt @float-session)
+  host=$(opt @float-host)
   fc=$(opt @float-client)
   [ -n "$kind" ] && [ -n "$host" ] || return 0
   client_exists "$host" || return 0
@@ -452,9 +478,10 @@ rebuild_debounced() {
   [ -n "${hw:-}" ] && [ -n "${iw:-}" ] || return 0
   read -r bw bh <<<"$(cmd_geom "$hw" "$hh" "$(opt @float-pw)" "$(opt @float-ph)")" || true
 
-  if [ "$bw" -eq $(( iw + 2 )) ] && [ "$bh" -eq $(( ih + 2 )) ]; then
-    setopt_ @float-want-w "$bw"; setopt_ @float-want-h "$bh"
-    return 0                             # already the right size, no flicker
+  if [ "$bw" -eq $((iw + 2)) ] && [ "$bh" -eq $((ih + 2)) ]; then
+    setopt_ @float-want-w "$bw"
+    setopt_ @float-want-h "$bh"
+    return 0 # already the right size, no flicker
   fi
   # A box tmux would refuse to draw: keep the float we have rather than closing
   # it and failing to put anything back.
@@ -477,20 +504,20 @@ emit_list() {
   # dirs that already have a live session and to order those dirs by recency.
   local sessions
   sessions=$(
-    tm list-sessions -F '#{session_last_attached} #{session_name}' 2>/dev/null \
-      | sort -rn -k1,1 \
-      | cut -d' ' -f2- \
-      | grep -vx "${prefix}picker" \
-      | tr '\n' '\034' || true
+    tm list-sessions -F '#{session_last_attached} #{session_name}' 2>/dev/null |
+      sort -rn -k1,1 |
+      cut -d' ' -f2- |
+      grep -vx "${prefix}picker" |
+      tr '\n' '\034' || true
   )
 
-# Build the picker list:
-#  - zoxide frecency + a shallow fd scan of ROOTS
-#  - strip trailing slashes (fd adds them, zoxide doesn't) so both sources dedupe
-#  - drop duplicates, preserving first-seen order
-#  - compute each dir's session name; list dirs with a live session first, tagged
-#    with a marker. Each line is "<marker>\t<dir>\t<session>"; fzf searches and
-#    previews the path (field 2) and we recover it after selection.
+  # Build the picker list:
+  #  - zoxide frecency + a shallow fd scan of ROOTS
+  #  - strip trailing slashes (fd adds them, zoxide doesn't) so both sources dedupe
+  #  - drop duplicates, preserving first-seen order
+  #  - compute each dir's session name; list dirs with a live session first, tagged
+  #    with a marker. Each line is "<marker>\t<dir>\t<session>"; fzf searches and
+  #    previews the path (field 2) and we recover it after selection.
   {
     _ZO_DOCTOR=0 zoxide query -l 2>/dev/null || true
     fd --type d --max-depth 1 --hidden --exclude .git . "${ROOTS[@]}" 2>/dev/null || true
@@ -538,23 +565,23 @@ pick_dir() {
   kind_config "$kind"
   choice=$(
     emit_list "$kind" | fzf \
-        --ansi \
-        --delimiter '\t' \
-        --with-nth 1,2 \
-        --nth 2 \
-        --scheme path \
-        --prompt "$prompt" \
-        --header "$header" \
-        --height 100% \
-        --layout reverse \
-        --border \
-        --border-label "$label" \
-        --border-label-pos 3 \
-        --color "border:$accent,label:$accent:reverse:bold,prompt:$accent,pointer:$accent,marker:$accent,info:$accent,spinner:$accent,header:$accent" \
-        --info inline \
-        --preview-window 'right,60%,border-left' \
-        --bind "alt-bspace,ctrl-x:execute-silent('$self' __kill {3})+reload('$self' __list $kind)" \
-        --preview '
+      --ansi \
+      --delimiter '\t' \
+      --with-nth 1,2 \
+      --nth 2 \
+      --scheme path \
+      --prompt "$prompt" \
+      --header "$header" \
+      --height 100% \
+      --layout reverse \
+      --border \
+      --border-label "$label" \
+      --border-label-pos 3 \
+      --color "border:$accent,label:$accent:reverse:bold,prompt:$accent,pointer:$accent,marker:$accent,info:$accent,spinner:$accent,header:$accent" \
+      --info inline \
+      --preview-window 'right,60%,border-left' \
+      --bind "alt-bspace,ctrl-x:execute-silent('$self' __kill {3})+reload('$self' __list $kind)" \
+      --preview '
           name={3}; dir={2}
           if [ -n "$name" ] && tmux has-session -t "=$name" 2>/dev/null; then
             tmux capture-pane -ep -t "$name"         # live session: show its screen
@@ -586,15 +613,25 @@ cmd_pick() {
 # Dispatch
 # ---------------------------------------------------------------------------
 case "${1:-}" in
-  key)      cmd_key "$2" "$3" ;;
-  run)      cmd_run "$2" "${3:-}" ;;
-  pick)     cmd_pick "$2" "${3:-switch}" ;;
-  resized)  cmd_resized "$2" ;;
-  guard)    cmd_guard "$2" ;;
-  name)     kind_config "$2"; session_name_for "$prefix" "$3"; printf '\n' ;;
-  geom)     cmd_geom "$2" "$3" "$4" "$5" ;;
-  classify) cmd_classify "$2" "$3" "$4" "$5" "$6" "$7" ;;
-  __list)   emit_list "$2" ;;
-  __kill)   [ -n "${2:-}" ] && tm kill-session -t "=$2" 2>/dev/null; exit 0 ;;
-  *)        printf 'usage: float.sh {key|run|pick|resized|guard|name|geom|classify} ...\n' >&2; exit 2 ;;
+key) cmd_key "$2" "$3" ;;
+run) cmd_run "$2" "${3:-}" ;;
+pick) cmd_pick "$2" "${3:-switch}" ;;
+resized) cmd_resized "$2" ;;
+guard) cmd_guard "$2" ;;
+name)
+  kind_config "$2"
+  session_name_for "$prefix" "$3"
+  printf '\n'
+  ;;
+geom) cmd_geom "$2" "$3" "$4" "$5" ;;
+classify) cmd_classify "$2" "$3" "$4" "$5" "$6" "$7" ;;
+__list) emit_list "$2" ;;
+__kill)
+  [ -n "${2:-}" ] && tm kill-session -t "=$2" 2>/dev/null
+  exit 0
+  ;;
+*)
+  printf 'usage: float.sh {key|run|pick|resized|guard|name|geom|classify} ...\n' >&2
+  exit 2
+  ;;
 esac
