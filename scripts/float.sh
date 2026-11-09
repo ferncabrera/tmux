@@ -40,9 +40,12 @@
 #   @float-pw/-ph    wanted size as a permille of the host client (920 = 92.0%).
 #   @float-want-w/-h popup box size in cells we last asked for, used to tell our
 #                    own resizes apart from a manual mouse resize.
+#   @float-want-for  "<w> <h>" of the host that box was sized for. While the host
+#                    is a different size, tmux is clamping the float and a rebuild
+#                    is on its way, so no float resize can be the mouse.
 #   @float-serial    debounce token for coalescing bursts of resize events.
 #
-# Subcommands: key | run | pick | resized | guard | name | geom | classify | __list | __kill
+# Subcommands: key | run | pick | resized | settle | guard | name | geom | classify | __list | __kill
 set -eu
 
 self="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")"
@@ -89,6 +92,28 @@ client_size() {
   [ -n "${1:-}" ] || return 0
   tm list-clients -F '#{client_name} #{client_width} #{client_height}' 2>/dev/null |
     awk -v n="$1" '$1 == n { print $2, $3; exit }'
+}
+
+# Echo "<host_w> <host_h> <float_w> <float_h>", or nothing if either is gone. One
+# list-clients call on purpose: two lookups can straddle a resize and pair the
+# old host size with the new, clamped float size — which reads exactly like a
+# manual mouse resize and used to get remembered as the new proportion.
+float_sizes() {
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] || return 0
+  tm list-clients -F '#{client_name} #{client_width} #{client_height}' 2>/dev/null |
+    awk -v h="$1" -v f="$2" '
+      $1 == h { hw = $2; hh = $3 }
+      $1 == f { fw = $2; fh = $3 }
+      END { if (hw != "" && fw != "") print hw, hh, fw, fh }'
+}
+
+# Echo the session a client is on, or nothing if it is gone. Looked up rather
+# than taken from a hook argument, so a session name with a space can't split
+# into two arguments.
+client_session() {
+  [ -n "${1:-}" ] || return 0
+  tm list-clients -F '#{client_name} #{session_name}' 2>/dev/null |
+    awk -v n="$1" '$1 == n { $1 = ""; sub(/^ /, ""); print; exit }'
 }
 
 float_open() { client_exists "$(opt @float-client)"; }
@@ -254,12 +279,44 @@ open_popup() {
   setopt_ @float-ph "$ph"
   setopt_ @float-want-w "$bw"
   setopt_ @float-want-h "$bh"
+  setopt_ @float-want-for "$hw $hh"
+
+  # A resize that lands while this popup is being drawn finds no float open and
+  # is dropped, and the size above was measured before it — so a drag of the
+  # window edge that paused mid-way could leave the float stuck at a stale size.
+  # Have `settle` look again once the popup is up. Scheduled on the server now,
+  # because the draw below blocks until the popup closes.
+  tm run-shell -b -d 0.3 "'$self' settle '$client'" 2>/dev/null || true
 
   # Blocks until the popup closes, which is fine: we are always either a
   # run-shell -b child (key press) or a hook child (rebuild).
-  tm display-popup -c "$client" -w "$bw" -h "$bh" -x C -y C \
-    -b rounded -S "fg=$accent" -T "$label" \
-    -E "'$self' run '$kind' '$sess'"
+  #
+  # The status is the supervisor's — or 129 when the popup is closed from outside
+  # instead: by the rebuild that replaces it on every terminal resize, by ^A on
+  # another terminal, or by Close on the border menu. That is just the end of this
+  # viewport, not a failure. Left to set -e, run-shell reports it ("… returned
+  # 129") in view mode over the pane on show in the float, until a key is pressed.
+  local rc err try
+  for try in 1 2 3 4 5; do
+    rc=0
+    err=$(tm display-popup -c "$client" -w "$bw" -h "$bh" -x C -y C \
+      -b rounded -S "fg=$accent" -T "$label" \
+      -E "'$self' run '$kind' '$sess'" 2>&1 >/dev/null) || rc=$?
+    # tmux refuses a popup bigger than the client rather than clamping it. If the
+    # host shrank between measuring it and drawing — the window edge is still
+    # being dragged — the old popup is already closed, so measure again and
+    # redraw instead of leaving no float at all.
+    case "$err" in *"too large"*) ;; *) break ;; esac
+    read -r hw hh <<<"$(client_size "$client")" || true
+    [ -n "${hw:-}" ] || return 0
+    read -r bw bh <<<"$(cmd_geom "$hw" "$hh" "$pw" "$ph")" || true
+    setopt_ @float-want-w "$bw"
+    setopt_ @float-want-h "$bh"
+    setopt_ @float-want-for "$hw $hh"
+  done
+  [ -z "$err" ] || printf '%s\n' "$err" >&2
+  [ "$rc" -ne 129 ] || rc=0
+  return "$rc"
 }
 
 # The float is one window that shows sessions of either kind: a claude session
@@ -301,7 +358,18 @@ cmd_key() {
     # another one on top. The throwaway picker session runs the same fzf and
     # switch-clients to the choice.
     local picker="${prefix}picker"
-    tm new-session -d -A -s "$picker" -n "$winname" "'$self' pick '$kind' switch"
+    [ "$(client_session "$client")" != "$picker" ] || return 0 # already up
+
+    # A picker nobody is attached to was left behind by a float that closed
+    # while it was up, still running fzf on a stale list: replace it. Never
+    # `new-session -A` here — for an existing session -A means attach-session,
+    # which fails from a run-shell job (no terminal), so a single leftover
+    # picker used to break ^A inside the float until it was killed by hand.
+    # Creating can still lose a race with a second ^A; then just use theirs.
+    if [ "$(tm display -p -t "=$picker:" '#{session_attached}' 2>/dev/null)" = 0 ]; then
+      tm kill-session -t "=$picker" 2>/dev/null || true
+    fi
+    tm new-session -d -s "$picker" -n "$winname" "'$self' pick '$kind' switch" 2>/dev/null || true
     tm set-option -t "=$picker:" status off 2>/dev/null || true
     tm set-option -t "=$picker:" detach-on-destroy on 2>/dev/null || true
     tm switch-client -c "$client" -t "=$picker"
@@ -354,8 +422,12 @@ cmd_run() {
       sess=$(session_name_for "$prefix" "$dir")
       ensure_session "$kind" "$sess" "$dir" || return 0
     else
+      # Gone before we could show it (killed between being chosen and now, e.g.
+      # two float sessions ending together): hop again, or close if nothing is
+      # left — not the picker, which is for when the float is opened.
       ensure_session "$kind" "$sess" || {
-        sess=""
+        sess=$(latest_float_session "$sess") || true
+        [ -n "$sess" ] || return 0
         continue
       }
     fi
@@ -398,10 +470,7 @@ cmd_guard() {
   local client=$1 sess
   [ "$client" = "$(opt @float-client)" ] || return 0
 
-  # Look the session up rather than taking it from the hook, so a session name
-  # with a space in it can't split into two arguments.
-  sess=$(tm list-clients -F '#{client_name} #{session_name}' 2>/dev/null |
-    awk -v n="$client" '$1 == n { $1 = ""; sub(/^ /, ""); print; exit }')
+  sess=$(client_session "$client")
   [ -n "$sess" ] || return 0
   setopt_ @float-session "$sess"
   apply_style "$sess"
@@ -432,15 +501,39 @@ cmd_resized() {
   fi
 }
 
+# Subcommand: settle — the follow-up open_popup schedules for each popup it draws.
+# Once that popup is up, rebuild if the host is no longer the size it was drawn
+# for (a resize was dropped while it was being drawn). Only the host is looked
+# at: the float's own size may differ because the user is resizing it with the
+# mouse right now, and a rebuild would undo that.
+cmd_settle() {
+  local host=$1 hw hh i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    float_open && break
+    sleep 0.2
+  done
+  float_open || return 0
+  [ "$host" = "$(opt @float-host)" ] || return 0
+  read -r hw hh <<<"$(client_size "$host")" || true
+  [ -n "${hw:-}" ] || return 0
+  if [ "$hw $hh" != "$(opt @float-want-for)" ]; then rebuild_debounced; fi
+}
+
 # The popup's inner client just changed size. If the user did it with the mouse,
 # remember the new size as a proportion of the host so it survives a rebuild.
 track_manual_resize() {
-  local fc host hw hh iw ih bw bh
+  local fc host hw hh iw ih bw bh built
   fc=$(opt @float-client)
   host=$(opt @float-host)
-  read -r hw hh <<<"$(client_size "$host")" || true
-  read -r iw ih <<<"$(client_size "$fc")" || true
+  read -r hw hh iw ih <<<"$(float_sizes "$host" "$fc")" || true
   [ -n "${hw:-}" ] && [ -n "${iw:-}" ] || return 0
+
+  # tmux only resizes the float by itself when the host changes size, so while
+  # the host is not the size this float was built for, this is tmux clamping it
+  # (and a rebuild is already on its way), never the mouse. That matters during
+  # a burst of resizes, when the float's own size lags behind the host's.
+  built=$(opt @float-want-for)
+  [ -z "$built" ] || [ "$built" = "$hw $hh" ] || return 0
 
   bw=$((iw + 2))
   bh=$((ih + 2)) # +2: we always draw a border
@@ -473,14 +566,14 @@ rebuild_debounced() {
   [ -n "$kind" ] && [ -n "$host" ] || return 0
   client_exists "$host" || return 0
 
-  read -r hw hh <<<"$(client_size "$host")" || true
-  read -r iw ih <<<"$(client_size "$fc")" || true
+  read -r hw hh iw ih <<<"$(float_sizes "$host" "$fc")" || true
   [ -n "${hw:-}" ] && [ -n "${iw:-}" ] || return 0
   read -r bw bh <<<"$(cmd_geom "$hw" "$hh" "$(opt @float-pw)" "$(opt @float-ph)")" || true
 
   if [ "$bw" -eq $((iw + 2)) ] && [ "$bh" -eq $((ih + 2)) ]; then
     setopt_ @float-want-w "$bw"
     setopt_ @float-want-h "$bh"
+    setopt_ @float-want-for "$hw $hh"
     return 0 # already the right size, no flicker
   fi
   # A box tmux would refuse to draw: keep the float we have rather than closing
@@ -617,6 +710,7 @@ key) cmd_key "$2" "$3" ;;
 run) cmd_run "$2" "${3:-}" ;;
 pick) cmd_pick "$2" "${3:-switch}" ;;
 resized) cmd_resized "$2" ;;
+settle) cmd_settle "$2" ;;
 guard) cmd_guard "$2" ;;
 name)
   kind_config "$2"
@@ -631,7 +725,7 @@ __kill)
   exit 0
   ;;
 *)
-  printf 'usage: float.sh {key|run|pick|resized|guard|name|geom|classify} ...\n' >&2
+  printf 'usage: float.sh {key|run|pick|resized|settle|guard|name|geom|classify} ...\n' >&2
   exit 2
   ;;
 esac

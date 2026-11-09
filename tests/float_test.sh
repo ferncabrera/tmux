@@ -83,10 +83,12 @@ trap cleanup EXIT
 make_stubs() {
   mkdir -p "$STUBS" "$DIR_A" "$DIR_B"
   # fzf: pick the line whose path field matches $PICKFILE's contents; an empty
-  # PICKFILE means the user pressed Esc.
+  # PICKFILE means the user pressed Esc, and @wait means they are still choosing
+  # (the picker stays up until something kills it).
   cat > "$STUBS/fzf" <<EOF
 #!/usr/bin/env bash
 want=\$(cat "$PICKFILE" 2>/dev/null)
+[ "\$want" = @wait ] && exec sleep 3600
 [ -n "\$want" ] || exit 130
 awk -F'\t' -v w="\$want" '\$2 == w { print; found=1; exit } END { exit !found }'
 EOF
@@ -123,6 +125,29 @@ float_on()     { [ "$(float_session)" = "$1" ]; }
 float_title()  { OT capture-pane -t o.0 -p 2>/dev/null \
                   | grep -m1 '╭' | grep -o 'CLAUDE\|MISC-SHELL' | head -1; }
 float_titled() { [ "$(float_title)" = "$1" ]; }
+picker_gone()  { ! FT has-session -t "=$1" 2>/dev/null; }
+
+# Everything run-shell has reported since the last call. When a `run-shell -b`
+# command (our key bindings, our hooks) exits non-zero, tmux prints
+# "'<command>' returned <n>" into view mode on whichever pane it considers
+# current — in real use, usually the one on show in the float, which is then
+# hidden until a key is pressed. A rebuild can scroll that line out of sight and
+# leave what looks like a blank screen, so any pane in view mode counts, and the
+# capture includes history. Each pane is dismissed so the next call starts clean.
+shell_errors() {
+  local p
+  for p in $(FT list-panes -a -F '#{pane_id} #{pane_mode}' 2>/dev/null | awk '$2 == "view-mode" { print $1 }'); do
+    printf '%s: %s\n' "$p" "$(FT capture-pane -M -p -S - -t "$p" 2>/dev/null | awk 'NF' | tr '\n' ' ')"
+    FT copy-mode -q -t "$p" 2>/dev/null
+  done
+}
+
+check_no_shell_errors() { # <name>
+  local e
+  sleep 0.3   # let any job that just finished get its report in
+  e=$(shell_errors)
+  if [ -z "$e" ]; then ok "$1"; else bad "$1" "$e"; fi
+}
 
 # Fire the ^A/^S code path the way the key binding does.
 press() { # <kind>
@@ -168,9 +193,20 @@ start_servers() { # <host_w> <host_h>
   HOST=$(FT list-clients -F '#{client_name}' | head -1)
 }
 
+# The float is up, registered, and the size its remembered proportion gives for
+# a <w>x<h> host — i.e. any rebuild has finished.
+float_settled() { # <host_w> <host_h>
+  [ "$(box_size)" = "$("$FLOAT" geom "$1" "$2" "$(fopt @float-pw)" "$(fopt @float-ph)")" ]
+}
+
 resize_host() { # <w> <h>
   OT resize-window -t o -x "$1" -y "$2"
-  sleep 0.6   # client-resized -> debounce -> rebuild
+  # client-resized -> debounce -> rebuild. Wait for the float to come back at the
+  # size its remembered proportion gives (the checks then say whether that
+  # proportion is right) rather than guessing how long a rebuild takes: a fixed
+  # 0.6s sleep was about the median rebuild time, which made the suite flaky.
+  sleep 0.2
+  wait_until 40 float_settled "$1" "$2"
 }
 
 fake_float_session() { # <name>
@@ -234,6 +270,52 @@ test_resize_host() {
   resize_host 164 40
   check "back to the original size"   "$("$FLOAT" geom 164 40 920 850)" "$(box_size)"
   check "still the same session"      "$(sname claude "$DIR_A")" "$(float_session)"
+  # Each rebuild closes the popup that a ^A (or the previous rebuild) is still
+  # blocked on; that must not surface as an error over the float.
+  check_no_shell_errors "rebuilding reports no errors"
+}
+
+test_resize_burst() {
+  printf '\n\033[1ma burst of resizes leaves the proportion alone\033[0m\n'
+  # Each resize lands as soon as the previous rebuild is up, while the hooks it
+  # set off are still running — what holding cmd-+ or dragging the window edge
+  # does. tmux clamping the float in the middle of that must never be taken for
+  # a mouse resize and remembered as the new proportion.
+  local pw ph i sz
+  pw=$(fopt @float-pw); ph=$(fopt @float-ph)
+  for i in 1 2 3; do
+    for sz in "100 24" "220 60" "164 40"; do
+      OT resize-window -t o -x "${sz% *}" -y "${sz#* }"
+      wait_until 40 float_settled "${sz% *}" "${sz#* }"
+    done
+  done
+  check "proportion survives a burst of resizes" "$pw $ph" "$(fopt @float-pw) $(fopt @float-ph)"
+  check "float ends the burst the right size" "$("$FLOAT" geom 164 40 "$pw" "$ph")" "$(box_size)"
+  check_no_shell_errors "a burst of resizes reports no errors"
+}
+
+test_resize_drag() {
+  printf '\n\033[1mdragging the window edge\033[0m\n'
+  # A stream of small steps with no pause for a rebuild. The float's own size
+  # lags the host's, so every clamp looks like a mouse resize unless we know the
+  # host moved; and a rebuild can land mid-drag, measure the host, and have the
+  # popup refused as too large once the host has shrunk again — which used to
+  # leave no float at all.
+  local pw ph run sz ok_all=1
+  pw=$(fopt @float-pw); ph=$(fopt @float-ph)
+  for run in 1 2 3; do
+    for sz in "158 39" "152 37" "146 36" "140 34" "134 33" "128 31" "122 30" "116 28" "110 27" "104 25" "100 24"; do
+      OT resize-window -t o -x "${sz% *}" -y "${sz#* }"; sleep 0.03
+    done
+    wait_until 40 float_settled 100 24 || ok_all=0
+    for sz in "104 25" "110 27" "116 28" "122 30" "128 31" "134 33" "140 34" "146 36" "152 37" "158 39" "164 40"; do
+      OT resize-window -t o -x "${sz% *}" -y "${sz#* }"; sleep 0.03
+    done
+    wait_until 40 float_settled 164 40 || ok_all=0
+  done
+  check "float survives dragging the edge in and out" 1 "$ok_all"
+  check "dragging keeps the proportion" "$pw $ph" "$(fopt @float-pw) $(fopt @float-ph)"
+  check_no_shell_errors "dragging reports no errors"
 }
 
 test_mouse_resize() {
@@ -259,6 +341,7 @@ test_mouse_resize() {
   resize_host 200 50
   check "manual proportion survives a zoom" "$("$FLOAT" geom 200 50 "$pw" "$ph")" "$(box_size)"
   resize_host 164 40
+  check_no_shell_errors "mouse resize + zoom report no errors"
 }
 
 test_hop_on_exit() {
@@ -289,6 +372,7 @@ test_hop_on_exit() {
   resize_host 150 36
   check "label survives a resize rebuild" "MISC-SHELL" "$(float_title)"
   resize_host 164 40
+  check_no_shell_errors "hopping + rebuilding report no errors"
 }
 
 test_close_when_empty() {
@@ -365,6 +449,7 @@ test_no_nesting() {
   check "retargeted at the misc session" "$(sname misc "$DIR_B")" "$(float_session)"
   wait_until 30 float_titled MISC-SHELL
   check "label follows the retarget"     "MISC-SHELL" "$(float_title)"
+  check_no_shell_errors "retargeting reports no errors"
 }
 
 test_label_returns() {
@@ -384,14 +469,61 @@ test_label_returns() {
 test_real_keybinding() {
   printf '\n\033[1mthe real ^A binding\033[0m\n'
   FT kill-session -t misc-picker 2>/dev/null
+  # Same as Close on the border menu: the ^A that opened this popup is still
+  # blocked on it, and must not report its closing as an error.
   FT display-popup -C -c "$HOST" 2>/dev/null
   wait_until 30 float_closed
+  check_no_shell_errors "closing the float from outside reports no error"
   printf '%s' "$DIR_B" > "$PICKFILE"
   # prefix (^A) then ^A, injected as real key input to the host client.
   OT send-keys -t o.0 C-a C-a
   if wait_until 60 float_is_open; then ok "^A ^A opens the float"
   else bad "^A ^A opens the float" "no popup appeared"; fi
   check "opens on the picked dir" "$(sname claude "$DIR_B")" "$(float_session)"
+}
+
+test_key_inside_float() {
+  printf '\n\033[1m^A inside the float\033[0m\n'
+  local fc; fc=$(float_client)
+  # Bring the picker up and leave it up, as if still choosing.
+  printf '@wait' > "$PICKFILE"
+  OT send-keys -t o.0 C-a C-a   # keys go to the popup, i.e. to the float client
+  if ! wait_until 40 float_on claude-picker; then
+    bad "^A ^A in the float brings up the picker" "on [$(float_session)]"; return
+  fi
+  ok "^A ^A in the float brings up the picker"
+
+  OT send-keys -t o.0 C-a C-a
+  sleep 0.6
+  check "^A ^A again leaves the picker up" "claude-picker" "$(float_session)"
+  check "...in the same float"             "$fc" "$(float_client)"
+  check_no_shell_errors "^A ^A on the open picker reports no error"
+}
+
+# The reported bug: a float closed while its picker was up leaves the picker
+# session behind, and from then on every ^A ^A inside the float failed with
+# "'float.sh key claude …' returned 1".
+test_key_past_leftover_picker() {
+  printf '\n\033[1m^A inside the float, with a picker left over\033[0m\n'
+  local a b
+  a=$(sname claude "$DIR_A"); b=$(sname claude "$DIR_B")
+  FT detach-client -t "$(float_client)"   # close the float with the picker up
+  wait_until 40 float_closed
+  # Make sure there is a leftover even if closing ever learns to clean it up.
+  FT has-session -t =claude-picker 2>/dev/null ||
+    FT new-session -d -s claude-picker 'sleep 3600'
+
+  printf '%s' "$DIR_A" > "$PICKFILE"
+  press claude
+  if ! wait_until 50 float_on "$a"; then bad "float reopens" "on [$(float_session)]"; return; fi
+
+  printf '%s' "$DIR_B" > "$PICKFILE"
+  OT send-keys -t o.0 C-a C-a
+  if wait_until 50 float_on "$b"; then ok "^A ^A in the float gets past a leftover picker"
+  else bad "^A ^A in the float gets past a leftover picker" "still on [$(float_session)]"; fi
+  check_no_shell_errors "...and reports no error"
+  wait_until 30 picker_gone claude-picker
+  check "no picker left behind once one is used" 1 "$(picker_gone claude-picker && echo 1 || echo 0)"
 }
 
 # ---------------------------------------------------------------------------
@@ -402,6 +534,8 @@ test_geom_unit
 test_classify_unit
 test_open_and_pick
 test_resize_host
+test_resize_burst
+test_resize_drag
 test_mouse_resize
 test_hop_on_exit
 test_close_when_empty
@@ -411,6 +545,8 @@ test_deliberate_detach_closes
 test_no_nesting
 test_label_returns
 test_real_keybinding
+test_key_inside_float
+test_key_past_leftover_picker
 
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 if [ "$FAIL" -gt 0 ]; then
